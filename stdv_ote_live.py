@@ -61,6 +61,7 @@ positions before exiting.
 import os
 import json
 import time
+import math
 from datetime import datetime, time as dtime, timedelta
 import pytz
 
@@ -298,8 +299,8 @@ def close_position(symbol):
     return qty
 
 
-def size_description(qty, notional, confidence):
-    return f"{qty} shares (confidence {confidence * 100:.0f}%)"
+def size_description(qty, notional, confidence, price):
+    return f"{qty:g} shares (~${qty * price:.2f} notional; confidence {confidence * 100:.0f}%)"
 
 
 # ---------------- CORE TRADING LOGIC ----------------
@@ -395,7 +396,8 @@ def run_trading_day(day):
                         if zone_low <= price <= zone_high and in_discount:
                             retracement = (day_high - price) / range_width
                             confidence, notional = confidence_and_notional(retracement - OTE_LOW, OTE_HIGH - OTE_LOW)
-                            qty = max(1, round(notional / price))
+                            qty = round(notional / price, 6)
+                            notional = qty * price
                             try:
                                 place_entry_order(symbol, OrderSide.BUY, qty)
                             except Exception as e:
@@ -412,7 +414,7 @@ def run_trading_day(day):
                                 state["best_price"] = price
                                 state["trailing_active"] = False
                                 state["worst_adverse"] = 0.0
-                                print_trade_open(symbol, "long", price, size_description(qty, notional, confidence))
+                                print_trade_open(symbol, "long", price, size_description(qty, notional, confidence, price))
                                 log_trade_event({
                                     "event": "open", "symbol": symbol, "direction": "long", "price": price,
                                     "qty": qty, "notional": notional, "confidence": confidence,
@@ -426,7 +428,11 @@ def run_trading_day(day):
                         if zone_low <= price <= zone_high and in_premium:
                             retracement = (price - day_low) / range_width
                             confidence, notional = confidence_and_notional(retracement - OTE_LOW, OTE_HIGH - OTE_LOW)
-                            qty = max(1, round(notional / price))
+                            qty = math.floor(notional / price)
+                            if qty < 1:
+                                log(f"Skipping {symbol} short: one share at ${price:.2f} exceeds the ${notional:.2f} confidence size.")
+                                continue
+                            notional = qty * price
                             try:
                                 place_entry_order(symbol, OrderSide.SELL, qty)
                             except Exception as e:
@@ -443,7 +449,7 @@ def run_trading_day(day):
                                 state["best_price"] = price
                                 state["trailing_active"] = False
                                 state["worst_adverse"] = 0.0
-                                print_trade_open(symbol, "short", price, size_description(qty, notional, confidence))
+                                print_trade_open(symbol, "short", price, size_description(qty, notional, confidence, price))
                                 log_trade_event({
                                     "event": "open", "symbol": symbol, "direction": "short", "price": price,
                                     "qty": qty, "notional": notional, "confidence": confidence,
